@@ -28,7 +28,11 @@ def main():
     for key in ("corner1", "corner3"):
         print(f"{key}:     ", fmt_mm(state[key]) if key in state else "not saved")
     grid = state.get("grid")
-    print("grid:        ", f"{grid['size'][0]} x {grid['size'][1]}" if grid else "not planned")
+    if grid and grid.get("stencil"):
+        s = grid["stencil"]
+        print("grid:        ", f"{len(grid['points'])} nodes from stencil {s['name']!r} ({s['fingerprint']})")
+    else:
+        print("grid:        ", f"{grid['size'][0]} x {grid['size'][1]}" if grid else "not planned")
     cal = state.get("calibrated")
     if cal:
         print(f"calibrated:   {sum(p is not None for p in cal)}/{len(cal)} points "

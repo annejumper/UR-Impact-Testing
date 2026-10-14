@@ -75,8 +75,43 @@ The x/y/z directions are the same as the old panel's, because both use the same 
 All tunable values are at the top of `urcommon.py`: speed, jog limit, `LIFT`, `HAMMER_OFFSET`,
 `HIT_Z_OFFSET`, gripper open/close %, and the channel URL. The probe step sizes and limits are at the top of `calibrate.py`.
 
-## Moving to Obie later
+## Running from ObieApp (stencils)
 
-`run_test.py` keeps the test logic in `move_to_point()` and `hit()`. Only `main()` decides when to call them
-(terminal prompts right now). An Obie version would be a small listener built on `urcommon.Channel` that calls the same
-two functions when Obie asks for a point or a hit. Corners, grid and calibration would stay as they are.
+The arm can follow an ObieApp Acquire run on your Mac: it goes to whichever node Acquire is on,
+hits, waits for Acquire to record the hit, and moves on when Acquire does. ObieApp is not changed.
+The arm reads the same run files ObieApp's Stencil Builder reads (see
+`obieapp-node-tracking-handoff.md`). Any stencil layout works, not just rectangles.
+
+| Step | Where | Command |
+|---|---|---|
+| Copy runs to the arm | **Mac** | `./sync_to_arm.sh ~/path/to/DataFolder croger@<arm-host>` (leave running) |
+| Set up the run, stencil applied | Mac | Acquire |
+| Align the stencil | arm | `python3 plan_stencil.py --latest ~/obie_runs/<Instrument>` |
+| Probe heights | arm | `python3 calibrate.py` (unchanged) |
+| Start recording | Mac | Acquire |
+| Hit | arm | `python3 follow_obie.py --latest ~/obie_runs/<Instrument>` |
+
+- **Getting the sync script onto the Mac:** `scp croger@<arm-host>:anne/impact_testing/sync_to_arm.sh ~/`.
+  It copies `template.json` and `TRF/` for each run once a second over ssh, skipping the WAVs.
+- **Aligning (`plan_stencil.py`)** replaces corners + `plan_grid.py`. Run it with `--show` first to list
+  the nodes and suggested alignment nodes. Then, in the interactive session, jog the extended probe about
+  1 mm above a node (as for corner 1) and type `a <label>`. Do this for 3 or more nodes spread out in a
+  triangle (4 is better: the fit then shows how well they agree), then `save`. `fit` shows the
+  fit so far, and `g <label>` moves 10 mm above any node to check it. Saving is refused if an alignment
+  node is more than 1 mm off, or if any node is out of reach. Alignment nodes are kept in `state.json`
+  as you go, so `--fit-only` can refit later without the arm.
+- **`follow_obie.py`** checks that the run's stencil is the one you aligned to (it refuses if nodes
+  were moved since), then follows Acquire. If Acquire doesn't record a hit within 10 s it stops and asks,
+  rather than hitting again. Repeat in Acquire makes it hit that position again. With `--latest` it
+  offers to switch when a new run appears (Start Over). Every hit is logged to `hits_log.csv`.
+  `--confirm` asks before every hit; use it for the first live runs. `--gap` sets the pause after a
+  recorded hit (default 1 s).
+- **Rectangles still work the old way:** with points from `plan_grid.py` instead of `plan_stencil.py`,
+  node N is grid point N+1. Corner 1 must be over the stencil's node 1, and no `--zigzag`.
+- **Testing without the arm:** `obiewatch.py RUN` prints Acquire's progress, and
+  `follow_obie.py RUN --dry-run` prints moves and hits without touching the arm or hammer.
+  `fake_obie_run.py` makes fake runs (grid, custom shapes, H,V prefixes) and can play Acquire, so
+  `follow_obie.py FAKE_RUN --dry-run --simulate` runs a whole test on paper.
+
+Under the hood, `run_test.py`'s `move_to_point()` and `hit()` do the work. `follow_obie.py` only decides
+when to call them, from the run's files instead of from terminal prompts.
