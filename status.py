@@ -25,10 +25,11 @@ def main():
         arm.close()
 
     state = load_state()
-    for key in ("corner1", "corner3"):
+    for key in ("corner1", "corner2", "corner3"):
         print(f"{key}:     ", fmt_mm(state[key]) if key in state else "not saved")
     grid = state.get("grid")
-    print("grid:        ", f"{grid['size'][0]} x {grid['size'][1]}" if grid else "not planned")
+    print("grid:        ", f"{grid['size'][0]} x {grid['size'][1]} ({grid.get('shape', 'square')})"
+          if grid else "not planned")
     cal = state.get("calibrated")
     if cal:
         print(f"calibrated:   {sum(p is not None for p in cal)}/{len(cal)} points "

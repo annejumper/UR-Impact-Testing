@@ -14,13 +14,13 @@ from urcommon import LIFT, Arm, fmt_mm, load_state
 def main():
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("point", help="point number, or c1 / c3")
+    parser.add_argument("point", help="point number, or c1 / c2 / c3")
     parser.add_argument("--hammer", action="store_true", help="use calibrated hammer positions")
     parser.add_argument("--touch", action="store_true", help="go all the way down (no LIFT)")
     args = parser.parse_args()
 
     state = load_state()
-    if args.point in ("c1", "c3"):
+    if args.point in ("c1", "c2", "c3"):
         key = "corner" + args.point[1]
         if key not in state:
             raise SystemExit(f"{key} not saved")

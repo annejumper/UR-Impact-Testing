@@ -39,15 +39,19 @@ JOINTS = [
 SPEED = 0.02            # m/s, tool speed used to pick move durations
 MIN_MOVE_TIME = 0.5     # s, shortest move duration
 MAX_JOG = 0.04          # m, largest single jog (same 4 cm limit as the panel)
-MAX_JOINT_STEP = 1.0    # rad, refuse moves where any joint turns more (catches IK flips)
+MAX_JOINT_STEP = 1.0    # rad, refuse moves where any joint turns more per segment (catches IK flips)
+MAX_SEGMENT = 0.02      # m, long moves are split into straight-line segments this long
+MAX_ROT_CHANGE = 10.0   # deg, travel() refuses if the tool is turned more than this from the saved orientation
 LIFT = 0.010            # m, clearance above the plate when moving between points
-HAMMER_OFFSET = (-0.015, 0.012)  # m, x/y shift from probe to hammer
+HAMMER_OFFSET = (-0.015, 0.012)  # m, x/y shift from probe to hammer, with the tool at HAMMER_OFFSET_YAW
+HAMMER_OFFSET_YAW = -94.0        # deg, heading of the tool's x axis for HAMMER_OFFSET; turned with the tool
 HIT_Z_OFFSET = 0.0005   # m, hammer height above the probed surface
 GRIPPER_OPEN = 58       # %, sized for the impact-testing tool
 GRIPPER_CLOSE = 60      # %
 CHANNEL_URI = "wss://chrisrogers.pyscriptapps.com/talking-on-a-channel/api/channels/hackathon"
 TOOL_REQUEST = "/modal/tool/request"
 STATE_FILE = os.path.join(HERE, "state.json")
+OFFSET_FILE = os.path.join(HERE, "hammer_offset.json")  # measured by hammer_offset.py; kept by status.py --reset
 
 
 # ---------------------------------------------------------------- state file
@@ -65,6 +69,28 @@ def save_state(state):
     with open(tmp, "w") as f:
         json.dump(state, f, indent=2)
     os.replace(tmp, STATE_FILE)
+
+
+def heading(rot):
+    """Heading of the tool's x axis in degrees, from a 3x3 rotation."""
+    return float(np.degrees(np.arctan2(rot[1][0], rot[0][0])))
+
+
+def hammer_offset(rot):
+    """Probe-to-hammer x/y shift for tool orientation rot (3x3), e.g. the saved corner 1 one.
+
+    Uses the offset measured by hammer_offset.py if there is one, else HAMMER_OFFSET,
+    turned by however far the tool's heading differs from where it was measured.
+    """
+    try:
+        with open(OFFSET_FILE) as f:
+            measured = json.load(f)
+        (ox, oy), ref = measured["offset"], measured["heading"]
+    except FileNotFoundError:
+        (ox, oy), ref = HAMMER_OFFSET, HAMMER_OFFSET_YAW
+    yaw = np.radians(heading(rot) - ref)
+    c, s = np.cos(yaw), np.sin(yaw)
+    return (float(c * ox - s * oy), float(s * ox + c * oy))
 
 
 def fmt_mm(xyz):
@@ -122,16 +148,17 @@ class Arm:
 
     # --- moving
 
-    def move_joints(self, target, duration):
+    def move_joints(self, path):
+        """Follow path = [(joint positions, seconds from start), ...]."""
         if not self._client.wait_for_server(timeout_sec=5.0):
             raise SystemExit("Action server not found. Is the driver running?")
         goal = FollowJointTrajectory.Goal()
         goal.trajectory.joint_names = JOINTS
-        point = JointTrajectoryPoint()
-        point.positions = [float(p) for p in target]
-        point.time_from_start = Duration(sec=int(duration),
-                                         nanosec=int(duration % 1 * 1e9))
-        goal.trajectory.points = [point]
+        for target, t in path:
+            point = JointTrajectoryPoint()
+            point.positions = [float(p) for p in target]
+            point.time_from_start = Duration(sec=int(t), nanosec=int(t % 1 * 1e9))
+            goal.trajectory.points.append(point)
 
         future = self._client.send_goal_async(goal)
         rclpy.spin_until_future_complete(self.node, future)
@@ -152,26 +179,53 @@ class Arm:
         if code != FollowJointTrajectory.Result.SUCCESSFUL:
             raise SystemExit(f"Move failed, error_code={code}")
 
+    def _closest_ik(self, target, q_prev):
+        """IK solution for a 3x4 pose nearest q_prev, or None.
+
+        The solver's own picker drops angles beyond +-2pi, so with a joint wound past a
+        full turn (e.g. wrist 3 after free drive) it picks a different arm configuration.
+        Here every solution's angles are shifted by whole turns to sit nearest q_prev.
+        """
+        sols = self.ik.inverse(target.reshape(-1).tolist(), all_solutions=True)
+        best, best_step = None, None
+        for sol in sols:
+            q = [float(a + 2 * np.pi * round((b - a) / (2 * np.pi))) for a, b in zip(sol, q_prev)]
+            step = max(abs(a - b) for a, b in zip(q, q_prev))
+            if best is None or step < best_step:
+                best, best_step = q, step
+        return best
+
     def move_to(self, xyz, rot=None, duration=None):
-        """Move the tool in a joint-space move to xyz, keeping rot (3x3) or the current rotation."""
+        """Move the tool in a straight line to xyz, keeping rot (3x3) or the current rotation.
+
+        The line is split into MAX_SEGMENT pieces, each solved with IK from the one before,
+        so long moves don't swing the tool through a joint-space arc.
+        """
         q_now = self.joints()
         pose_now = self.pose(q_now)
+        start = pose_now[:, 3]
+        end = np.asarray(xyz, dtype=float)
+        dist = float(np.linalg.norm(end - start))
+        if duration is None:
+            duration = max(MIN_MOVE_TIME, dist / SPEED)
         target = pose_now.copy()
         if rot is not None:
             target[:, :3] = np.asarray(rot)
-        target[:, 3] = xyz
 
-        q = self.ik.inverse(target.reshape(-1).tolist(), q_guess=q_now)
-        if q is None:
-            raise SystemExit(f"No IK solution for {fmt_mm(xyz)}")
-        step = max(abs(a - b) for a, b in zip(q, q_now))
-        if step > MAX_JOINT_STEP:
-            raise SystemExit(f"Refusing move: a joint would turn {step:.2f} rad "
-                             f"(limit {MAX_JOINT_STEP}). Check the target.")
-        if duration is None:
-            dist = float(np.linalg.norm(np.asarray(xyz) - pose_now[:, 3]))
-            duration = max(MIN_MOVE_TIME, dist / SPEED)
-        self.move_joints(q, duration)
+        n = max(1, int(np.ceil(dist / MAX_SEGMENT)))
+        path, q_prev = [], q_now
+        for k in range(1, n + 1):
+            target[:, 3] = start + (end - start) * k / n
+            q = self._closest_ik(target, q_prev)
+            if q is None:
+                raise SystemExit(f"No IK solution for {fmt_mm(target[:, 3])}")
+            step = max(abs(a - b) for a, b in zip(q, q_prev))
+            if step > MAX_JOINT_STEP:
+                raise SystemExit(f"Refusing move: a joint would turn {step:.2f} rad near "
+                                 f"{fmt_mm(target[:, 3])} (limit {MAX_JOINT_STEP}). Check the target.")
+            path.append((q, duration * k / n))
+            q_prev = q
+        self.move_joints(path)
 
     def move_by(self, dx=0.0, dy=0.0, dz=0.0, duration=None):
         x, y, z = self.xyz()
@@ -179,7 +233,14 @@ class Arm:
 
     def travel(self, xyz, rot=None):
         """Lift, move over xyz, then lower onto it, so the tool never drags across the plate."""
-        x, y, z = self.xyz()
+        pose = self.pose()
+        if rot is not None:
+            cos = (np.trace(np.asarray(rot).T @ pose[:, :3]) - 1) / 2
+            angle = np.degrees(np.arccos(np.clip(cos, -1, 1)))
+            if angle > MAX_ROT_CHANGE:
+                raise SystemExit(f"The tool is rotated {angle:.0f} deg from the orientation saved with "
+                                 "corner 1 (wrist turned since then?). Turn it back, or re-save the corners.")
+        x, y, z = pose[:, 3]
         safe_z = max(z, xyz[2]) + LIFT
         self.move_to([x, y, safe_z], rot=rot)
         self.move_to([xyz[0], xyz[1], safe_z], rot=rot)

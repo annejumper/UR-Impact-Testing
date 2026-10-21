@@ -3,7 +3,7 @@
 
 One move:      python3 jog.py +x 5        (mm; also -x, +y, -y, +z, -z)
 Interactive:   python3 jog.py             (type "+x 5", "-z", "step 1", "pos",
-                                           "c1", "c3", "open", "close", "q")
+                                           "c1", "c2", "c3", "open", "close", "q")
 
 Orientation is held fixed. Each jog is limited to MAX_JOG (40 mm).
 """
@@ -17,7 +17,7 @@ HELP = """commands:
   +x 5 / -y 2 / +z     jog (mm; uses the current step if no number given)
   step 1               set the default step in mm
   pos                  print the current position
-  c1 / c3              save corner 1 / corner 3 (same as save_corner.py)
+  c1 / c2 / c3         save corner 1 / 2 / 3 (same as save_corner.py; c2 only for non-square plates)
   open / close         gripper
   q                    quit"""
 
@@ -61,7 +61,7 @@ def interactive(arm):
                 step = float(words[1])
             elif cmd == "pos":
                 print("now at", fmt_mm(arm.xyz()))
-            elif cmd in ("c1", "c3"):
+            elif cmd in ("c1", "c2", "c3"):
                 save_corner(arm, int(cmd[1]))
             elif cmd == "open":
                 arm.gripper(GRIPPER_OPEN)
