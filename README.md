@@ -56,6 +56,7 @@ Useful extras:
 - `python3 goto.py 5` moves the probe 10 mm above planned point 5. `python3 goto.py 5 --hammer` uses the calibrated hammer position.
 - `python3 tool.py listen` prints all channel traffic, for debugging the panel link.
 - `calibrate.py --no-probe --height 10` skips probing (for when the probe isn't working). It puts the hammer 10 mm above each point's planned height. It trusts the corner heights; `status.py` and `run_test.py` show when heights weren't probed.
+- `calibrate.py --probe corners` probes only the 4 corners and `--probe edges` only the outer ring; the other points' heights are interpolated (fine for a flat plate, even tilted or twisted). Use the default `--probe all` when the plate bends between points, like a long cantilevered beam.
 - `calibrate.py --start N` and `run_test.py --start N` / `--points 3 7` resume or redo points.
 - At the `run_test.py` prompt: Enter = hit, `r` = redo the last hit, `n` = next point, `b` = back to the previous point, `q` = quit. A redo is logged again under the same point and hit number; keep the later row.
 - `run_test.py --auto 4` fires every 4 s with no prompts.

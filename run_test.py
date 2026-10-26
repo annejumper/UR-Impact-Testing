@@ -107,7 +107,9 @@ def main():
         raise SystemExit(f"points must be 1-{n}, got {bad}")
 
     mode = state.get("calibration_mode", "probed")
-    if mode != "probed":
+    if mode.startswith("probed "):
+        print(f"NOTE: heights {mode}: points {state.get('interpolated')}.")
+    elif mode != "probed":
         print(f"NOTE: heights were not probed ({mode}).")
     print(f"Testing points {numbers}, {args.hits} hit(s) each"
           + (f", auto every {args.auto:g} s" if args.auto else "") + ".")

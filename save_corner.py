@@ -22,7 +22,7 @@ def save_corner(arm, which):
     state[f"corner{which}"] = pose[:, 3].tolist()
     if which == 1:
         state["rotation"] = pose[:, :3].tolist()
-    for key in ("grid", "calibrated", "calibration_mode"):
+    for key in ("grid", "calibrated", "calibration_mode", "interpolated"):
         state.pop(key, None)
     save_state(state)
     print(f"corner {which} saved at", fmt_mm(state[f'corner{which}']))

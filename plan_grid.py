@@ -100,8 +100,8 @@ def main():
 
     state["grid"] = {"size": [args.nx, ny], "zigzag": args.zigzag,
                      "shape": "rectangle" if c2 else "square", "points": points}
-    state.pop("calibrated", None)
-    state.pop("calibration_mode", None)
+    for key in ("calibrated", "calibration_mode", "interpolated"):
+        state.pop(key, None)
     save_state(state)
     print(f"{len(points)} points saved. Next: python3 calibrate.py")
 
